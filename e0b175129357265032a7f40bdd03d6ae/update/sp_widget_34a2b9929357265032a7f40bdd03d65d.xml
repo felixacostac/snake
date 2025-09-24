@@ -1,0 +1,2144 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sp_widget">
+    <sp_widget action="INSERT_OR_UPDATE">
+        <category>custom</category>
+        <client_script><![CDATA[api.controller = function($timeout) { 
+  var c = this;
+
+  console.log("Snake game controller loaded");
+
+  const levels = c.data.levels;//Levels are stored on the server side initially
+
+
+  $timeout(function() {
+
+    const snakeLayer = document.getElementById('snake-layer'); // for snake & food
+    const animationLayer = document.getElementById('animation-layer'); // new layer for food animation
+
+    const gameWidth = 300;
+    const gameHeight = 300;
+    const gridSize = 10;
+
+    let snake = [{
+      x: Math.floor(gameWidth / (2 * gridSize)) * gridSize,
+      y: Math.floor(gameHeight / (2 * gridSize)) * gridSize,
+	  glow: 0,
+	  color: "hsl(120, 100%, 60%)"
+    }];
+
+    const directions = ['UP','RIGHT','DOWN','LEFT'];
+    let dirIndex = 1; //Starting facing right
+
+    let score = 0;
+    let gameOver = false;
+	let foodEaten = false;
+	let growSegments = 0;
+	let gamePaused = false;
+
+    let currentLevel = 0;
+    let obstacles = levels[currentLevel].obstacles;
+	let isAnimatingObstacles = false;
+
+    let food = randomFood();
+
+	let gameInterval = null;
+
+waitForAnime(() => {
+  // Show main overlay
+  showOverlayMessage("Play Snake!", {
+    color: "white",
+    onClose: () => {
+      const firstLevelObstacles = levels[currentLevel].obstacles;
+
+      // Animate obstacles first
+      animateObstacles(firstLevelObstacles, () => {
+        obstacles = firstLevelObstacles;
+
+        // ✅ Start game loop only now
+        if (!gameInterval) {
+          gameInterval = setInterval(gameLoop, 100);
+        }
+
+        gamePaused = false; // finally let snake move
+      });
+    }
+  });
+
+  // Show intro message
+  showInlineMessage(
+    "Use the <b>space bar</b> to start the game or click. <br>Use <b><- and -> </b> <br>keys  or click on the <br><b>left</b> or <b>right</b> <br>of the screen on your mobile to turn.",
+    { duration: 3000, color: "black",  html: true }
+  );
+});
+
+
+
+
+    function gameLoop() {
+
+		if(gamePaused) return;
+		if (gameOver) return;
+		move();
+		draw();
+    }
+
+
+function randomFood() {
+  let newFood;
+  let isOnSnake, isOnObstacle;
+
+	if (isAnimatingObstacles) {
+
+    return null; // caller should retry later. Food always waits for obstacle animation to complete
+  }
+
+  do {
+    newFood = {
+      x: getRandomCoord(gameWidth),
+      y: getRandomCoord(gameHeight)
+    };
+
+    isOnSnake = snake.some(seg => seg.x === newFood.x && seg.y === newFood.y);
+    isOnObstacle = (obstacles && obstacles.length > 0) 
+                   ? obstacles.some(block => block.x === newFood.x && block.y === newFood.y)
+                   : false;
+  } while (isOnSnake || isOnObstacle);
+
+  return newFood;
+}
+    function draw() {
+
+			snakeLayer.innerHTML = ''; // clear snake layer each frame
+			
+
+      // Draw snake
+      snake.forEach(segment => {
+        const el = document.createElement('div');
+        el.className = 'snake';
+        el.style.left = segment.x + 'px';
+        el.style.top = segment.y + 'px';
+
+
+		if (segment.glow > 0) {
+			el.style.boxShadow = '0 0 ' + (4 + segment.glow * 2)  + 'px lime';
+			// Color effect driven by glow
+    		// Map glow → hue (e.g. green → yellow → red → purple → back)
+    		const hue = 120 - segment.glow * 10; 
+			el.style.backgroundColor = "hsl(" + ((hue + 360)%360) + ",100% ,60%)";
+    	
+			segment.glow--; // decrease glow per frame
+			} else {
+				el.style.boxShadow = 'none';
+				el.style.backgroundColor = 'hsl(120, 100%, 60%)'; // base green
+				}
+		if (segment.glow > 0) {
+			el.style.boxShadow = '0 0 8px lime';
+			segment.glow--; // reduce glow each frame
+			} else {
+        el.style.boxShadow = 'none';
+    }	
+
+		segment.el = el;
+        snakeLayer.appendChild(el);
+      });
+
+      // Draw obstacles (still on gameArea for simplicity)
+      obstacles.forEach(block => {
+        const Obsel = document.createElement('div');
+        Obsel.className = 'obstacle';
+        Obsel.style.left = block.x + 'px';
+        Obsel.style.top = block.y + 'px';
+		Obsel.style.backgroundColor = block.color;
+       snakeLayer.appendChild(Obsel); // put on same layer for alignment
+      });
+
+      // Draw food
+	  if (!foodEaten) {
+      const foodEl = document.createElement('div');
+      foodEl.className = 'food';
+      foodEl.style.left = food.x + 'px';
+      foodEl.style.top = food.y + 'px';
+      snakeLayer.appendChild(foodEl); // keep food on snakeLayer so it moves correctly
+	  }
+
+    }
+
+    function move() {
+
+      const head = { ...snake[0] };
+      const direction = directions[dirIndex];
+
+      let nextX = head.x;
+      let nextY = head.y;
+
+      if (direction === 'RIGHT') nextX += gridSize;
+      if (direction === 'LEFT') nextX -= gridSize;
+      if (direction === 'UP') nextY -= gridSize;
+      if (direction === 'DOWN') nextY += gridSize;
+
+      // Wall collision
+      if (head.x <= 0 || head.y <= 0 || head.x >= gameWidth - gridSize || head.y >= gameHeight - gridSize) {
+		console.log('COLLISION:: XY, WALLXY::' + head.x + ',' + head.y + ':::' + gameWidth + ',' + gameHeight);
+        endGame();
+        return;
+      }
+
+      head.x = nextX;
+      head.y = nextY;
+
+      // Obstacle collision
+      if (obstacles.some(block => block.x === head.x && block.y === head.y)) {
+        endGame();
+        return;
+      }
+
+      // Self collision
+      if (snake.some(seg => seg.x === head.x && seg.y === head.y)) {
+        endGame();
+        return;
+      }
+
+      snake.unshift(head);
+
+      // Food collision
+      if (head.x === food.x && head.y === food.y) {
+        score++;
+		foodEaten = true;
+
+        // --- NEW: Animate food using temporary div in animationLayer ---
+        animateFoodEat(food.x, food.y, () => {
+          food = randomFood(); // Generate new food after animation
+		  foodEaten = false;
+        });
+
+		snake.forEach((seg, index) => {
+        setTimeout(() => {
+            seg.glow = 5; // number of frames to glow
+        }, index * 50); // 50ms stagger for each segment
+    });
+
+		growSegments += 3;
+
+        // Level up every 5 points
+        if (score % 5 === 0) {
+			handleLevelUp();  
+  
+}
+	
+      } else {
+			if (growSegments > 0) {
+			growSegments--;
+			} else {
+
+
+        snake.pop();
+      }
+    }
+	}
+    function endGame() {
+		gameOver = true;
+		gamePaused = true; 
+		clearInterval(gameInterval);
+		gameInterval = null;
+		
+		runLoseAnimation();
+	  
+	  showOverlayMessage("Thank you for playing!", {
+  color: "white"});
+
+  // compute levelsCompleted array from score
+const pointsPerLevel = 5; // how many points per level to consider "full"
+const fullLevels = Math.floor(score / pointsPerLevel);
+const lastLevelPoints = score % pointsPerLevel;
+
+const levelsCompletedArr = [];
+for (let i = 0; i < fullLevels; i++) levelsCompletedArr.push(pointsPerLevel);
+if (lastLevelPoints > 0) levelsCompletedArr.push(lastLevelPoints);
+
+// show share UI
+showShareResults(levelsCompletedArr);
+
+}
+
+    function getRandomCoord(max) {
+      const cells = Math.floor(max / gridSize -2);
+      const index = Math.floor(Math.random() * cells + 1);
+      return index * gridSize;
+    }
+
+
+    // --- NEW: Animate food with temporary div ---
+    function animateFoodEat(x, y, onComplete) {
+		const animDiv = document.createElement('div');
+		animDiv.className = 'food';
+		animDiv.style.left = x + 'px';
+		animDiv.style.top  = y + 'px';
+		animationLayer.appendChild(animDiv);
+		
+		anime({
+			targets: animDiv,
+			scale: [
+				{ value: 1.5, duration: 400, easing: 'easeOutElastic(1, .6)' },
+				{ value: 1, duration: 600, easing: 'easeOutElastic(1, .6)' }
+				],
+			backgroundColor: [
+			{ value: '#FF0000', duration: 25 },   // start red
+			{ value: '#FFD700', duration: 25 },   // then yellow
+			{ value: '#FFFFFF', duration: 25 }    // then white
+			],
+			opacity: [
+				{ value: 1, duration: 0 },             // fully visible at start
+				{ value: 0, duration: 200, delay: 400 } // fade out after color sequence
+  ],
+		easing: 'linear',
+    // fade out after the bounce finishes
+        complete: () => {
+          animDiv.remove(); // remove temporary div
+          if (onComplete) onComplete();
+        }
+      });
+    }
+
+
+
+function handleLevelUp() {
+
+	console.log('handleLevelUp:: ' + currentLevel);
+	
+  // Move to next level
+  currentLevel++;
+
+  // Stop snake movement while transitioning
+  gamePaused = true;
+  clearInterval(gameInterval);
+  gameInterval = null;
+
+  runWinAnimation().then(() => {
+    // After animation finishes, reset snake
+	let centerX = Math.floor(gameWidth / (2 * gridSize)) * gridSize;
+    let centerY = Math.floor(gameHeight / (2 * gridSize)) * gridSize;
+    snake = [{ x: centerX, y: centerY, glow: 0 }];
+    dirIndex = 1;
+    growSegments = 0;
+
+// Show LEVEL READY messagee
+    showInlineMessage("Level " + (currentLevel) + "<b> ready! </b>",{ duration: 2000, color: "black",  html: true}); 
+
+
+        const nextObstacles = levels[currentLevel].obstacles;
+		
+        // Animate obstacles first
+		animateObstacles(nextObstacles, () => {
+			obstacles = nextObstacles;
+			ensureFoodSpawn();
+			
+		// Ensure game loop is running
+		if (!gameInterval) {
+			gameInterval = setInterval(gameLoop, 100);
+			}
+
+          gamePaused = false; // resume snake movement
+        });
+    });
+
+}
+
+
+function runWinAnimation() {
+	snakeLayer.innerHTML = ""; //clear snake layer too
+  return new Promise(resolve => {
+	
+    const animLayer = document.getElementById('animation-layer');
+    animLayer.innerHTML = ""; // clear previous animations
+
+    // Generate 10 rainbow HSL colors
+    const colors = [];
+    for (let i = 0; i < 10; i++) {
+      const hue = (i * 36) % 360; // 20 steps around the color wheel
+      colors.push({ backgroundColor: "hsl(" + hue + ", 100%, 60%)" });
+    }
+
+    const totalSegments = snake.length;
+    let completedSegments = 0;
+
+    snake.forEach((seg, i) => {
+      const clone = document.createElement('div');
+      clone.className = 'snake';
+      clone.style.left = seg.x + 'px';
+      clone.style.top = seg.y + 'px';
+      clone.style.backgroundColor = 'hsl(120, 100%, 60%)'; // starting color
+      animLayer.appendChild(clone);
+
+      anime({
+        targets: clone,
+        scale: [
+          { value: 1.5, duration: 500, easing: 'easeOutQuad' },
+          { value: 1.0, duration: 500, easing: 'easeInOutSine' }
+        ],
+        keyframes: colors,
+        delay: i * 25,      // stagger to propagate along the snake
+        duration: 200,       // full color cycle per loop
+        loop: 1,             // run twice
+        easing: 'linear',
+		begin: () => {
+    // remove that segment from the real snake layer when animation begins
+			if (seg.el) {
+				seg.el.remove();
+				seg.el = null; // clear reference
+      }
+  		},
+        complete: () => {
+          clone.remove();
+          completedSegments++;
+          if (completedSegments === totalSegments) {
+            animLayer.innerHTML = ""; // clear animation layer
+			
+            resolve();
+          }
+        }
+      });
+    });
+  });
+}
+
+
+function runLoseAnimation() {
+  snakeLayer.innerHTML = ""; // clear snake layer too
+  return new Promise(resolve => {
+    const animLayer = document.getElementById('animation-layer');
+    animLayer.innerHTML = ""; // clear previous animations
+
+    const totalSegments = snake.length;
+    let completedSegments = 0;
+
+    snake.forEach((seg, i) => {
+      const clone = document.createElement('div');
+      clone.className = 'snake';
+      clone.style.left = seg.x + 'px';
+      clone.style.top = seg.y + 'px';
+      clone.style.backgroundColor = 'hsl(120, 100%, 60%)'; // start green
+      animLayer.appendChild(clone);
+
+      anime({
+        targets: clone,
+        delay: i * 100, // stagger more clearly
+        keyframes: [
+          { backgroundColor: 'hsl(120, 100%, 60%)', scale: 1.1, duration: 200, easing: 'easeOutQuad' },
+          { backgroundColor: 'hsl(0, 0%, 50%)', scale: 0.5, duration: 600, easing: 'easeInOutSine' },
+          { opacity: 0, duration: 300, easing: 'linear' } // fade away
+        ],
+		begin: () => {
+    // remove that segment from the real snake layer when animation begins
+			if (seg.el) {
+				seg.el.remove();
+				seg.el = null; // clear reference
+      }
+  		},
+        complete: () => {
+          clone.remove();
+          completedSegments++;
+          if (completedSegments === totalSegments) {
+            animLayer.innerHTML = ""; 
+            resolve();
+          }
+        }
+      });
+    });
+  });
+}
+
+
+function animateObstacles(levelObstacles, onComplete) {
+	console.log('animateObstalces:::' + levelObstacles);
+	isAnimatingObstacles = true;
+	gamePaused  = true;
+    const animLayer = document.getElementById('animation-layer');
+
+    if (animLayer) animLayer.innerHTML = ""; // clear any previous animations
+	obstacles = [...levelObstacles]
+
+	snakeLayer.querySelectorAll('.obstacle').forEach(el => el.remove()); // remove visuals too
+    const obstacleEls = [];
+
+    levelObstacles.forEach((block) => {
+        const el = document.createElement('div');
+        el.className = 'obstacle';
+        el.style.left = block.x + 'px';
+        el.style.top = block.y + 'px';
+		el.style.backgroundColor = block.color;
+        el.style.transform = 'scale(0)';
+        animLayer.appendChild(el);
+        obstacleEls.push(el);
+    });
+
+    anime({
+        targets: obstacleEls,
+        scale: 1,
+        easing: 'easeOutBack',
+        duration: 50,
+        delay: anime.stagger(20),
+        complete: () => {
+            animLayer.innerHTML = "";        // remove animation elements
+			console.log('AnimateOstacles complete - new level obstacless:::' + obstacles);
+            if (onComplete) onComplete();
+			isAnimatingObstacles = false;
+			gamePaused = false;
+        }
+    });
+}
+
+
+// ]]>🔹<![CDATA[ Overlay message (pauses game until dismissed)
+function showOverlayMessage(text, options = {}) {
+  const overlay = document.getElementById("message-overlay");
+  const gameArea = document.getElementById("game-area");
+
+  overlay.innerHTML = "";
+  overlay.classList.add("active");
+
+  // Pause game
+  gamePaused = true;
+
+  const span = document.createElement("span");
+  span.textContent = text;
+  span.style.display = "inline-block";
+  span.style.color = options.color || "lime";
+  span.style.fontSize = options.fontSize || "28px";
+  overlay.appendChild(span);
+
+  // Animate in
+  anime({
+    targets: span,
+    opacity: [0, 1],
+    translateY: [30, 0],
+    easing: "easeOutBack",
+    duration: options.duration || 600
+  });
+
+  function closeMessage() {
+    overlay.classList.remove("active");
+    overlay.innerHTML = "";
+    gamePaused = false;
+
+    // Remove listeners
+    document.removeEventListener("keydown", onDismiss);
+    gameArea.removeEventListener("click", onDismiss);
+    gameArea.removeEventListener("touchstart", onDismiss);
+
+    if (typeof options.onClose === "function") options.onClose();
+  }
+
+  function onDismiss(e) {
+    if (e.type === "keydown" && (e.code === "Space" || e.key === " ")) {
+      e.preventDefault();
+      closeMessage();
+    }
+    if (e.type === "click" || e.type === "touchstart") {
+      closeMessage();
+    }
+  }
+
+  // Add listeners for dismiss
+  document.addEventListener("keydown", onDismiss);
+  gameArea.addEventListener("click", onDismiss);
+  gameArea.addEventListener("touchstart", onDismiss);
+}
+
+
+
+
+// message: string (plain or html if html=true)
+// options: { duration: number (ms, 0 => persistent), html: boolean, onClose: fn }
+function showInlineMessage(message, options = {}) {
+  const messageArea = document.getElementById("level-message");
+  if (!messageArea) return;
+
+  const duration = (options.duration !== undefined) ? options.duration : 3000;
+  const allowHTML = !!options.html;
+
+  // make sure parent is visible (in case prior code left inline opacity/transform)
+  messageArea.style.opacity = '';
+  messageArea.style.transform = '';
+
+  // remove any previous ephemeral message box (but keep share-container if present)
+  const prev = messageArea.querySelector('.inline-message');
+  if (prev) prev.remove();
+
+  // create child box and animate that
+  const box = document.createElement('div');
+  box.className = 'inline-message';
+  if (allowHTML) box.innerHTML = message;
+  else box.textContent = message;
+
+  // append and animate the child
+  messageArea.appendChild(box);
+
+  anime({
+    targets: box,
+    opacity: [0, 1],
+    translateY: [8, 0],
+    scale: [0.98, 1],
+    easing: 'easeOutBack',
+    duration: 320
+  });
+
+  // auto-remove only if duration > 0
+  if (duration > 0) {
+    setTimeout(() => {
+      anime({
+        targets: box,
+        opacity: [1, 0],
+        translateY: [0, 8],
+        scale: [1, 0.98],
+        easing: 'easeInBack',
+        duration: 240,
+        complete: () => {
+          if (box && box.parentNode) box.parentNode.removeChild(box);
+          if (typeof options.onClose === 'function') options.onClose();
+        }
+      });
+    }, duration);
+  }
+
+  return box;
+}
+
+
+
+
+// levelsCompleted: Array<number> (or a string/HTML fallback)
+function showShareResults(levelsCompleted) {
+  const messageArea = document.getElementById('level-message');
+  if (!messageArea) {
+    console.warn('No #level-message found');
+    return;
+  }
+
+  // ensure parent is visible (clear any leftover inline animation styles)
+  messageArea.style.opacity = '';
+  messageArea.style.transform = '';
+  messageArea.style.height = 'auto';
+
+  // reuse existing share-container inside messageArea, or create it if absent
+  let shareContainer = messageArea.querySelector('#share-container');
+  if (!shareContainer) {
+    shareContainer = document.createElement('div');
+    shareContainer.id = 'share-container';
+    messageArea.appendChild(shareContainer);
+  } else {
+    shareContainer.innerHTML = ''; // clear old content
+    shareContainer.style.display = 'flex';
+  }
+
+// Build preview HTML if array passed
+let previewHtml = '';
+if (Array.isArray(levelsCompleted)) {
+  previewHtml = levelsCompleted
+    .map((v) => {
+      const safeVal = Math.max(0, Math.min(Number(v) || 0, 5)); // max 5 squares
+      if (safeVal === 5) {
+        return ']]>🟩🟩🟩🟩🟩<![CDATA[✅';
+      } else {
+        const greenSquares = ']]>🟩<![CDATA['.repeat(safeVal);
+        const blackSquares = '⬛'.repeat(5 - safeVal);
+        return greenSquares + blackSquares + '❌';
+      }
+    })
+    .join('\n');
+} else if (typeof levelsCompleted === 'string') {
+  previewHtml = levelsCompleted;
+} else {
+  previewHtml = '<em>No results</em>';
+}
+
+  // Fill container (styling is in CSS)
+  shareContainer.innerHTML = '<button id="share-btn" type="button">Share My Results</button>';
+
+  // Animate only the share container (not messageArea)
+  anime({
+    targets: shareContainer,
+    opacity: [0, 1],
+    translateY: [10, 0],
+    duration: 350,
+    easing: 'easeOutCubic'
+  });
+
+  // Attach handler for copy
+  const shareBtn = shareContainer.querySelector('#share-btn');
+  if (shareBtn) {
+    shareBtn.onclick = () => {
+      let textToCopy;
+	  textToCopy = previewHtml;
+
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        showInlineMessage('✅ Results copied to clipboard!', { duration: 2000 });
+      }).catch(err => {
+        console.error('Copy failed', err);
+        showInlineMessage('⚠️ Could not copy results.', { duration: 2000 });
+      });
+    };
+  }
+	logResults(previewHtml);
+
+  return shareContainer;
+}
+
+
+
+
+
+function ensureFoodSpawn() {
+  if (isAnimatingObstacles) {
+    // wait until animation ends
+    setTimeout(ensureFoodSpawn, 100);
+    return;
+  }
+  let newF;
+  do {
+    newF = randomFood();
+  } while (!newF);
+  food = newF;
+}
+
+
+function waitForAnime(callback) {
+  if (typeof anime !== "undefined") {
+    callback();
+  } else {
+    setTimeout(() => waitForAnime(callback), 50); // retry every 50ms
+  }
+}
+
+
+function logResults(myResults){
+		console.log('logResults::: ' + myResults);
+
+		c.data.action = "logResults";
+		c.data.results = myResults;
+		c.data.userAgent = navigator.userAgent;
+		c.server.update();
+		
+}
+
+
+    document.addEventListener('keydown', e => {
+      if(e.key === 'ArrowLeft'){
+        dirIndex = (dirIndex + 3) % 4; // wrap left
+      }
+      if(e.key === 'ArrowRight'){
+        dirIndex = (dirIndex +1 ) % 4; // wrap right
+      }
+
+	  if (e.key === ' ' && gamePaused){
+		console.log('SPCAE BAR UNPAUSE');
+		const overlay = document.getElementById("message-overlay");
+		overlay.classList.remove("active");
+		gamePaused = false;
+		 }
+
+    });
+
+	const gameWrapper = document.getElementById("game-wrapper");
+
+
+function handleClickOrTap(e) {
+  if (gameOver || gamePaused) return;
+
+  let x;
+  if (e.type === "touchstart") {
+    x = e.touches[0].clientX; // finger pos
+  } else {
+    x = e.clientX; // mouse click pos
+  }
+
+  const screenWidth = window.innerWidth;
+  const isLeftSide = x < screenWidth / 2;
+
+  if (isLeftSide) {
+    dirIndex = (dirIndex + 3) % 4; // turn left
+  } else {
+    dirIndex = (dirIndex + 1) % 4; // turn right
+  }
+}
+
+
+gameWrapper.addEventListener("pointerup", handleClickOrTap);
+
+	
+gameWrapper.addEventListener("click", () => {
+		if (gamePaused) {
+			const overlay = document.getElementById("message-overlay");
+			console.log('gameWRAPPER - removing gamePaused');
+			overlay.classList.remove("active");
+			gamePaused = false;
+  }
+});
+
+
+  }, 0);
+
+
+};]]></client_script>
+        <controller_as>c</controller_as>
+        <css>/* ------------------------------&#13;
+   Center the entire game container&#13;
+--------------------------------*/&#13;
+#game-wrapper {&#13;
+  display: flex;&#13;
+  flex-direction: column;&#13;
+  align-items: center;      /* horizontal center */&#13;
+  justify-content: center;  /* vertical center */&#13;
+  min-height: 100vh;        /* fill screen height */&#13;
+  box-sizing: border-box;&#13;
+}&#13;
+&#13;
+&#13;
+#game-area {&#13;
+  position: relative;&#13;
+  width: 300px;&#13;
+  height: 300px;&#13;
+  box-sizing: border-box; /* include border in width/height */&#13;
+  overflow: hidden;  &#13;
+  background: &#13;
+    radial-gradient(&#13;
+      #000 0%,&#13;
+      #000 40%,&#13;
+      #4B4B4B 100%); &#13;
+}&#13;
+&#13;
+&#13;
+&#13;
+#level-message {&#13;
+  display: flex;&#13;
+  width: 300px;       &#13;
+  height: 60px;       &#13;
+  text-align: center;&#13;
+  position: relative;&#13;
+  display: block;&#13;
+}&#13;
+&#13;
+#snake-layer, #animation-layer {&#13;
+  position: absolute;&#13;
+  top: 0;&#13;
+  left: 0;&#13;
+  width: 100%;&#13;
+  height: 100%;&#13;
+  pointer-events: none;&#13;
+  background: transparent;&#13;
+&#13;
+}&#13;
+&#13;
+#snake-layer{&#13;
+	border: 5px solid #81B5A1&#13;
+}&#13;
+&#13;
+&#13;
+&#13;
+#animation-layer {&#13;
+/* border: 1px solid red */&#13;
+}&#13;
+&#13;
+&#13;
+&#13;
+#message-overlay {&#13;
+  position: absolute;&#13;
+  top: 50%;&#13;
+  left: 50%;&#13;
+  transform: translate(-50%, -50%);&#13;
+  display: flex;                /* lay out letters side by side */&#13;
+  justify-content: center;      /* center horizontally */&#13;
+  align-items: center;          /* center vertically */&#13;
+  flex-wrap: wrap;              /* wrap long words to next line */&#13;
+  max-width: 90%;               /* keep inside playfield */&#13;
+  max-height: 90%;&#13;
+  overflow: hidden;             /* prevent spill */&#13;
+  text-align: center;&#13;
+  z-index: 999;&#13;
+}&#13;
+&#13;
+#message-overlay .message-letter {&#13;
+  display: inline-block;&#13;
+  font-weight: bold;&#13;
+  margin: 0 2px;&#13;
+  white-space: pre;             /* preserve spaces */&#13;
+}&#13;
+&#13;
+#message-overlay.active {&#13;
+  display: flex;&#13;
+}&#13;
+#message-overlay span {&#13;
+  opacity: 0;&#13;
+}&#13;
+&#13;
+&#13;
+.snake, .food, .obstacle {&#13;
+  position: absolute;&#13;
+  width: 10px;   /* match gridSize */&#13;
+  height: 10px;  /* match gridSize */&#13;
+  transform: translate(-50%, -50%);&#13;
+  background: lime;&#13;
+}&#13;
+&#13;
+&#13;
+&#13;
+.food {&#13;
+  background: red;&#13;
+}&#13;
+&#13;
+.obstacle {&#13;
+  background-color: gray;&#13;
+}&#13;
+&#13;
+&#13;
+&#13;
+/* ------------------------------&#13;
+   Share / Restart Buttons (Game Over)&#13;
+--------------------------------*/&#13;
+#share-container {&#13;
+&#13;
+  display: flex;   /* hidden until game over */&#13;
+  flex-direction: column;&#13;
+  align-items: center;&#13;
+  gap: 10px;&#13;
+  width: 100%;&#13;
+  max-width: 300px;&#13;
+  padding: 5px 0px;   /* 10px top/bottom, 15px left/right */&#13;
+}&#13;
+&#13;
+#share-container button {&#13;
+  width: 100%;&#13;
+  padding: 6px 0;       /* smaller, Wordle-like */&#13;
+  font-size: 16px;&#13;
+/*  font-weight: bold;*/&#13;
+  border-radius: 4px;&#13;
+  border: none;&#13;
+/*  background: #d3d6da;*/&#13;
+  color: black;&#13;
+  cursor: pointer;&#13;
+  box-shadow: none;     /* remove shadows */&#13;
+}&#13;
+&#13;
+#share-container button:hover {&#13;
+  background: #b9bbc0;&#13;
+}&#13;
+&#13;
+#share-container button:active {&#13;
+  background: #a4a6aa;&#13;
+}&#13;
+&#13;
+&#13;
+</css>
+        <data_table>sp_instance</data_table>
+        <demo_data/>
+        <description/>
+        <docs/>
+        <field_list/>
+        <has_preview>false</has_preview>
+        <id/>
+        <internal>false</internal>
+        <link><![CDATA[function link(scope, element, attrs, controller) {
+  
+}]]></link>
+        <name>snake</name>
+        <option_schema/>
+        <public>true</public>
+        <roles/>
+        <script><![CDATA[(function() {
+
+	if(input && input.action === 'logResults') {
+	
+    var sessionInfo = [];
+
+    var session = gs.getSession();
+
+	sessionInfo.push(new GlideDate);
+	sessionInfo.push(input.results);
+	sessionInfo.push(session.getClientIP());
+    sessionInfo.push(input.userAgent);
+    sessionInfo.push(session.getTimeZoneName());
+    sessionInfo.push(session.getLanguage());
+    sessionInfo.push(session.getUserName());
+    
+
+    gs.info('Snake session info: ' + sessionInfo);
+
+    return; 
+  }//Set to run log results
+
+data.levels = [
+
+	//Level 0
+	{ obstacles: []},
+	//Level 1	
+{
+  obstacles: [
+    { x: 250, y: 50, color: "#bcbec0" },
+    { x: 240, y: 40, color: "#bcbec0" },
+    { x: 50, y: 40, color: "#bcbec0" },
+    { x: 40, y: 50, color: "#bcbec0" },
+    { x: 40, y: 240, color: "#bcbec0" },
+    { x: 50, y: 250, color: "#bcbec0" },
+    { x: 240, y: 250, color: "#bcbec0" },
+    { x: 250, y: 240, color: "#bcbec0" },
+    { x: 240, y: 240, color: "#808285" },
+    { x: 50, y: 240, color: "#939598" },
+    { x: 40, y: 250, color: "#939598" },
+    { x: 50, y: 50, color: "#939598" },
+    { x: 40, y: 40, color: "#939598" },
+    { x: 240, y: 50, color: "#939598" },
+    { x: 250, y: 40, color: "#939598" },
+    { x: 250, y: 250, color: "#939598" },
+    { x: 260, y: 210, color: "#939598" },
+    { x: 260, y: 220, color: "#58595b" },
+    { x: 260, y: 230, color: "#58595b" },
+    { x: 260, y: 240, color: "#58595b" },
+    { x: 260, y: 250, color: "#58595b" },
+    { x: 210, y: 260, color: "#939598" },
+    { x: 220, y: 260, color: "#58595b" },
+    { x: 230, y: 260, color: "#58595b" },
+    { x: 240, y: 260, color: "#58595b" },
+    { x: 250, y: 260, color: "#58595b" },
+    { x: 260, y: 260, color: "#939598" },
+    { x: 30, y: 210, color: "#939598" },
+    { x: 30, y: 220, color: "#58595b" },
+    { x: 30, y: 230, color: "#58595b" },
+    { x: 30, y: 240, color: "#58595b" },
+    { x: 30, y: 250, color: "#58595b" },
+    { x: 80, y: 260, color: "#939598" },
+    { x: 70, y: 260, color: "#58595b" },
+    { x: 50, y: 260, color: "#58595b" },
+    { x: 60, y: 260, color: "#58595b" },
+    { x: 40, y: 260, color: "#58595b" },
+    { x: 30, y: 260, color: "#939598" },
+    { x: 260, y: 80, color: "#939598" },
+    { x: 260, y: 70, color: "#58595b" },
+    { x: 260, y: 60, color: "#58595b" },
+    { x: 260, y: 50, color: "#58595b" },
+    { x: 260, y: 40, color: "#58595b" },
+    { x: 210, y: 30, color: "#939598" },
+    { x: 220, y: 30, color: "#58595b" },
+    { x: 230, y: 30, color: "#58595b" },
+    { x: 240, y: 30, color: "#58595b" },
+    { x: 250, y: 30, color: "#58595b" },
+    { x: 260, y: 30, color: "#939598" },
+    { x: 80, y: 30, color: "#939598" },
+    { x: 30, y: 80, color: "#939598" },
+    { x: 70, y: 30, color: "#58595b" },
+    { x: 60, y: 30, color: "#58595b" },
+    { x: 50, y: 30, color: "#58595b" },
+    { x: 40, y: 30, color: "#58595b" },
+    { x: 30, y: 70, color: "#58595b" },
+    { x: 30, y: 60, color: "#58595b" },
+    { x: 30, y: 50, color: "#58595b" },
+    { x: 30, y: 40, color: "#58595b" },
+    { x: 30, y: 30, color: "#939598" }
+  ]
+},
+
+
+
+
+/*
+{
+  obstacles: [
+    { x: 40, y: 40, color: "#231f20" },
+    { x: 40, y: 250, color: "#231f20" },
+    { x: 250, y: 250, color: "#231f20" },
+    { x: 250, y: 40, color: "#231f20" },
+    { x: 250, y: 260, color: "#939598" },
+    { x: 240, y: 260, color: "#939598" },
+    { x: 220, y: 260, color: "#939598" },
+    { x: 230, y: 260, color: "#939598" },
+    { x: 260, y: 250, color: "#939598" },
+    { x: 260, y: 230, color: "#939598" },
+    { x: 260, y: 240, color: "#939598" },
+    { x: 260, y: 220, color: "#939598" },
+    { x: 260, y: 260, color: "#939598" },
+    { x: 70, y: 260, color: "#939598" },
+    { x: 50, y: 260, color: "#939598" },
+    { x: 60, y: 260, color: "#939598" },
+    { x: 40, y: 260, color: "#939598" },
+    { x: 30, y: 220, color: "#939598" },
+    { x: 30, y: 250, color: "#939598" },
+    { x: 30, y: 230, color: "#939598" },
+    { x: 30, y: 240, color: "#939598" },
+    { x: 30, y: 260, color: "#939598" },
+    { x: 260, y: 70, color: "#939598" },
+    { x: 260, y: 60, color: "#939598" },
+    { x: 260, y: 50, color: "#939598" },
+    { x: 260, y: 40, color: "#939598" },
+    { x: 260, y: 30, color: "#939598" },
+    { x: 250, y: 30, color: "#939598" },
+    { x: 240, y: 30, color: "#939598" },
+    { x: 230, y: 30, color: "#939598" },
+    { x: 220, y: 30, color: "#939598" },
+    { x: 70, y: 30, color: "#939598" },
+    { x: 60, y: 30, color: "#939598" },
+    { x: 50, y: 30, color: "#939598" },
+    { x: 40, y: 30, color: "#939598" },
+    { x: 30, y: 70, color: "#939598" },
+    { x: 30, y: 60, color: "#939598" },
+    { x: 30, y: 50, color: "#939598" },
+    { x: 30, y: 40, color: "#939598" },
+    { x: 30, y: 30, color: "#939598" }
+  ]
+},
+
+*/
+
+//Level 2
+{
+  obstacles: [
+    { x: 30, y: 60, color: "#d1d3d4" },
+    { x: 30, y: 110, color: "#d1d3d4" },
+    { x: 30, y: 150, color: "#d1d3d4" },
+    { x: 30, y: 200, color: "#d1d3d4" },
+    { x: 260, y: 200, color: "#d1d3d4" },
+    { x: 260, y: 150, color: "#d1d3d4" },
+    { x: 260, y: 110, color: "#d1d3d4" },
+    { x: 260, y: 60, color: "#d1d3d4" },
+    { x: 30, y: 240, color: "#414042" },
+    { x: 30, y: 210, color: "#414042" },
+    { x: 30, y: 190, color: "#414042" },
+    { x: 30, y: 160, color: "#414042" },
+    { x: 30, y: 150, color: "#414042" },
+    { x: 30, y: 120, color: "#414042" },
+    { x: 30, y: 100, color: "#414042" },
+    { x: 30, y: 70, color: "#414042" },
+    { x: 30, y: 50, color: "#414042" },
+    { x: 260, y: 240, color: "#414042" },
+    { x: 260, y: 210, color: "#414042" },
+    { x: 260, y: 190, color: "#414042" },
+    { x: 260, y: 160, color: "#414042" },
+    { x: 260, y: 150, color: "#414042" },
+    { x: 260, y: 120, color: "#414042" },
+    { x: 260, y: 100, color: "#414042" },
+    { x: 260, y: 70, color: "#414042" },
+    { x: 260, y: 50, color: "#414042" },
+    { x: 250, y: 200, color: "#414042" },
+    { x: 250, y: 150, color: "#414042" },
+    { x: 250, y: 110, color: "#414042" },
+    { x: 250, y: 60, color: "#414042" },
+    { x: 40, y: 200, color: "#414042" },
+    { x: 40, y: 150, color: "#414042" },
+    { x: 270, y: 250, color: "#939598" },
+    { x: 270, y: 240, color: "#939598" },
+    { x: 270, y: 230, color: "#939598" },
+    { x: 270, y: 220, color: "#939598" },
+    { x: 270, y: 210, color: "#939598" },
+    { x: 270, y: 200, color: "#939598" },
+    { x: 270, y: 190, color: "#939598" },
+    { x: 270, y: 180, color: "#939598" },
+    { x: 270, y: 170, color: "#939598" },
+    { x: 270, y: 160, color: "#939598" },
+    { x: 270, y: 150, color: "#939598" },
+    { x: 270, y: 150, color: "#939598" },
+    { x: 270, y: 140, color: "#939598" },
+    { x: 270, y: 130, color: "#939598" },
+    { x: 270, y: 120, color: "#939598" },
+    { x: 270, y: 110, color: "#939598" },
+    { x: 270, y: 100, color: "#939598" },
+    { x: 270, y: 90, color: "#939598" },
+    { x: 270, y: 80, color: "#939598" },
+    { x: 270, y: 70, color: "#939598" },
+    { x: 270, y: 60, color: "#939598" },
+    { x: 270, y: 50, color: "#939598" },
+    { x: 270, y: 40, color: "#939598" },
+    { x: 260, y: 250, color: "#a7a9ac" },
+    { x: 260, y: 230, color: "#a7a9ac" },
+    { x: 260, y: 220, color: "#a7a9ac" },
+    { x: 260, y: 180, color: "#a7a9ac" },
+    { x: 260, y: 170, color: "#a7a9ac" },
+    { x: 260, y: 140, color: "#a7a9ac" },
+    { x: 260, y: 130, color: "#a7a9ac" },
+    { x: 260, y: 90, color: "#a7a9ac" },
+    { x: 260, y: 80, color: "#a7a9ac" },
+    { x: 260, y: 40, color: "#a7a9ac" },
+    { x: 250, y: 250, color: "#a7a9ac" },
+    { x: 250, y: 240, color: "#a7a9ac" },
+    { x: 250, y: 210, color: "#a7a9ac" },
+    { x: 250, y: 190, color: "#a7a9ac" },
+    { x: 250, y: 160, color: "#a7a9ac" },
+    { x: 250, y: 150, color: "#a7a9ac" },
+    { x: 250, y: 120, color: "#a7a9ac" },
+    { x: 250, y: 100, color: "#a7a9ac" },
+    { x: 250, y: 70, color: "#a7a9ac" },
+    { x: 250, y: 50, color: "#a7a9ac" },
+    { x: 240, y: 250, color: "#a7a9ac" },
+    { x: 240, y: 200, color: "#a7a9ac" },
+    { x: 240, y: 150, color: "#a7a9ac" },
+    { x: 240, y: 110, color: "#a7a9ac" },
+    { x: 240, y: 60, color: "#a7a9ac" },
+    { x: 50, y: 250, color: "#a7a9ac" },
+    { x: 50, y: 200, color: "#a7a9ac" },
+    { x: 50, y: 150, color: "#a7a9ac" },
+    { x: 50, y: 110, color: "#a7a9ac" },
+    { x: 50, y: 60, color: "#a7a9ac" },
+    { x: 40, y: 250, color: "#a7a9ac" },
+    { x: 40, y: 240, color: "#a7a9ac" },
+    { x: 40, y: 210, color: "#a7a9ac" },
+    { x: 40, y: 190, color: "#a7a9ac" },
+    { x: 40, y: 160, color: "#a7a9ac" },
+    { x: 40, y: 150, color: "#a7a9ac" },
+    { x: 40, y: 120, color: "#a7a9ac" },
+    { x: 40, y: 110, color: "#414042" },
+    { x: 40, y: 100, color: "#a7a9ac" },
+    { x: 40, y: 70, color: "#a7a9ac" },
+    { x: 40, y: 60, color: "#414042" },
+    { x: 40, y: 50, color: "#a7a9ac" },
+    { x: 30, y: 250, color: "#a7a9ac" },
+    { x: 30, y: 230, color: "#a7a9ac" },
+    { x: 30, y: 220, color: "#a7a9ac" },
+    { x: 30, y: 180, color: "#a7a9ac" },
+    { x: 30, y: 170, color: "#a7a9ac" },
+    { x: 30, y: 140, color: "#a7a9ac" },
+    { x: 30, y: 130, color: "#a7a9ac" },
+    { x: 30, y: 90, color: "#a7a9ac" },
+    { x: 30, y: 80, color: "#a7a9ac" },
+    { x: 30, y: 40, color: "#a7a9ac" },
+    { x: 20, y: 250, color: "#939598" },
+    { x: 20, y: 240, color: "#939598" },
+    { x: 20, y: 230, color: "#939598" },
+    { x: 20, y: 220, color: "#939598" },
+    { x: 20, y: 210, color: "#939598" },
+    { x: 20, y: 200, color: "#939598" },
+    { x: 20, y: 190, color: "#939598" },
+    { x: 20, y: 180, color: "#939598" },
+    { x: 20, y: 170, color: "#939598" },
+    { x: 20, y: 160, color: "#939598" },
+    { x: 20, y: 150, color: "#939598" },
+    { x: 20, y: 150, color: "#939598" },
+    { x: 20, y: 140, color: "#939598" },
+    { x: 20, y: 130, color: "#939598" },
+    { x: 20, y: 120, color: "#939598" },
+    { x: 20, y: 110, color: "#939598" },
+    { x: 20, y: 100, color: "#939598" },
+    { x: 20, y: 90, color: "#939598" },
+    { x: 20, y: 80, color: "#939598" },
+    { x: 20, y: 70, color: "#939598" },
+    { x: 20, y: 60, color: "#939598" },
+    { x: 20, y: 50, color: "#939598" },
+    { x: 20, y: 40, color: "#939598" }
+  ]
+},
+
+
+/*
+{
+	//Level 2
+  obstacles: [
+    { x: 50, y: 180, color: "#a7a9ac" },
+    { x: 50, y: 210, color: "#a7a9ac" },
+    { x: 50, y: 190, color: "#a7a9ac" },
+    { x: 50, y: 170, color: "#a7a9ac" },
+    { x: 50, y: 150, color: "#a7a9ac" },
+    { x: 50, y: 220, color: "#a7a9ac" },
+    { x: 50, y: 200, color: "#a7a9ac" },
+    { x: 50, y: 150, color: "#a7a9ac" },
+    { x: 50, y: 160, color: "#a7a9ac" },
+    { x: 50, y: 140, color: "#a7a9ac" },
+    { x: 50, y: 130, color: "#a7a9ac" },
+    { x: 50, y: 90, color: "#a7a9ac" },
+    { x: 50, y: 70, color: "#a7a9ac" },
+    { x: 50, y: 120, color: "#a7a9ac" },
+    { x: 50, y: 110, color: "#a7a9ac" },
+    { x: 50, y: 100, color: "#a7a9ac" },
+    { x: 50, y: 80, color: "#a7a9ac" },
+    { x: 240, y: 190, color: "#a7a9ac" },
+    { x: 240, y: 120, color: "#a7a9ac" },
+    { x: 240, y: 160, color: "#a7a9ac" },
+    { x: 240, y: 80, color: "#a7a9ac" },
+    { x: 240, y: 200, color: "#a7a9ac" },
+    { x: 240, y: 170, color: "#a7a9ac" },
+    { x: 240, y: 150, color: "#a7a9ac" },
+    { x: 240, y: 110, color: "#a7a9ac" },
+    { x: 240, y: 100, color: "#a7a9ac" },
+    { x: 240, y: 180, color: "#a7a9ac" },
+    { x: 240, y: 220, color: "#a7a9ac" },
+    { x: 240, y: 140, color: "#a7a9ac" },
+    { x: 240, y: 90, color: "#a7a9ac" },
+    { x: 240, y: 150, color: "#a7a9ac" },
+    { x: 240, y: 70, color: "#a7a9ac" },
+    { x: 240, y: 210, color: "#a7a9ac" },
+    { x: 240, y: 130, color: "#a7a9ac" }
+  ]
+},
+*/
+//Level 3
+{
+  obstacles: [
+    { x: 40, y: 40, color: "#e6e7e8" },
+    { x: 250, y: 250, color: "#e6e7e8" },
+    { x: 40, y: 50, color: "#231f20" },
+    { x: 50, y: 40, color: "#231f20" },
+    { x: 240, y: 250, color: "#231f20" },
+    { x: 250, y: 240, color: "#231f20" },
+    { x: 40, y: 60, color: "#d1d3d4" },
+    { x: 50, y: 50, color: "#d1d3d4" },
+    { x: 60, y: 40, color: "#d1d3d4" },
+    { x: 230, y: 250, color: "#d1d3d4" },
+    { x: 240, y: 240, color: "#d1d3d4" },
+    { x: 250, y: 230, color: "#d1d3d4" },
+    { x: 250, y: 220, color: "#a7a9ac" },
+    { x: 240, y: 230, color: "#a7a9ac" },
+    { x: 230, y: 240, color: "#a7a9ac" },
+    { x: 220, y: 250, color: "#a7a9ac" },
+    { x: 250, y: 260, color: "#a7a9ac" },
+    { x: 230, y: 260, color: "#a7a9ac" },
+    { x: 240, y: 260, color: "#a7a9ac" },
+    { x: 220, y: 260, color: "#a7a9ac" },
+    { x: 210, y: 260, color: "#a7a9ac" },
+    { x: 260, y: 210, color: "#a7a9ac" },
+    { x: 260, y: 250, color: "#a7a9ac" },
+    { x: 260, y: 220, color: "#a7a9ac" },
+    { x: 260, y: 240, color: "#a7a9ac" },
+    { x: 260, y: 230, color: "#a7a9ac" },
+    { x: 260, y: 260, color: "#a7a9ac" },
+    { x: 40, y: 70, color: "#a7a9ac" },
+    { x: 50, y: 60, color: "#a7a9ac" },
+    { x: 60, y: 50, color: "#a7a9ac" },
+    { x: 70, y: 40, color: "#a7a9ac" },
+    { x: 80, y: 30, color: "#a7a9ac" },
+    { x: 70, y: 30, color: "#a7a9ac" },
+    { x: 60, y: 30, color: "#a7a9ac" },
+    { x: 40, y: 30, color: "#a7a9ac" },
+    { x: 50, y: 30, color: "#a7a9ac" },
+    { x: 30, y: 70, color: "#a7a9ac" },
+    { x: 30, y: 60, color: "#a7a9ac" },
+    { x: 30, y: 80, color: "#a7a9ac" },
+    { x: 30, y: 50, color: "#a7a9ac" },
+    { x: 30, y: 40, color: "#a7a9ac" },
+    { x: 30, y: 30, color: "#a7a9ac" }
+  ]
+},
+{
+  obstacles: [
+    { x: 260, y: 60, color: "#58595b" },
+    { x: 260, y: 50, color: "#58595b" },
+    { x: 260, y: 40, color: "#58595b" },
+    { x: 260, y: 30, color: "#58595b" },
+    { x: 250, y: 250, color: "#939598" },
+    { x: 250, y: 240, color: "#939598" },
+    { x: 250, y: 230, color: "#939598" },
+    { x: 250, y: 220, color: "#939598" },
+    { x: 250, y: 210, color: "#939598" },
+    { x: 250, y: 200, color: "#939598" },
+    { x: 250, y: 190, color: "#939598" },
+    { x: 250, y: 180, color: "#939598" },
+    { x: 250, y: 60, color: "#58595b" },
+    { x: 250, y: 50, color: "#231f20" },
+    { x: 250, y: 40, color: "#a7a9ac" },
+    { x: 250, y: 30, color: "#58595b" },
+    { x: 240, y: 250, color: "#939598" },
+    { x: 240, y: 240, color: "#58595b" },
+    { x: 240, y: 60, color: "#58595b" },
+    { x: 240, y: 50, color: "#a7a9ac" },
+    { x: 240, y: 40, color: "#231f20" },
+    { x: 240, y: 30, color: "#58595b" },
+    { x: 230, y: 250, color: "#939598" },
+    { x: 230, y: 240, color: "#e6e7e8" },
+    { x: 230, y: 60, color: "#58595b" },
+    { x: 230, y: 50, color: "#58595b" },
+    { x: 230, y: 40, color: "#58595b" },
+    { x: 230, y: 30, color: "#58595b" },
+    { x: 220, y: 250, color: "#939598" },
+    { x: 220, y: 240, color: "#58595b" },
+    { x: 220, y: 60, color: "#58595b" },
+    { x: 220, y: 50, color: "#231f20" },
+    { x: 220, y: 40, color: "#231f20" },
+    { x: 220, y: 30, color: "#58595b" },
+    { x: 210, y: 250, color: "#939598" },
+    { x: 210, y: 240, color: "#e6e7e8" },
+    { x: 210, y: 200, color: "#fff" },
+    { x: 210, y: 60, color: "#58595b" },
+    { x: 210, y: 50, color: "#d1d3d4" },
+    { x: 210, y: 40, color: "#e6e7e8" },
+    { x: 210, y: 30, color: "#58595b" },
+    { x: 200, y: 250, color: "#939598" },
+    { x: 200, y: 240, color: "#58595b" },
+    { x: 200, y: 60, color: "#58595b" },
+    { x: 200, y: 50, color: "#e6e7e8" },
+    { x: 200, y: 40, color: "#d1d3d4" },
+    { x: 200, y: 30, color: "#58595b" },
+    { x: 190, y: 250, color: "#939598" },
+    { x: 190, y: 240, color: "#e6e7e8" },
+    { x: 190, y: 60, color: "#58595b" },
+    { x: 190, y: 50, color: "#d1d3d4" },
+    { x: 190, y: 40, color: "#e6e7e8" },
+    { x: 190, y: 30, color: "#58595b" },
+    { x: 180, y: 250, color: "#939598" },
+    { x: 180, y: 240, color: "#939598" },
+    { x: 180, y: 230, color: "#939598" },
+    { x: 180, y: 220, color: "#939598" },
+    { x: 180, y: 210, color: "#939598" },
+    { x: 180, y: 200, color: "#939598" },
+    { x: 180, y: 190, color: "#939598" },
+    { x: 180, y: 180, color: "#939598" },
+    { x: 180, y: 60, color: "#58595b" },
+    { x: 180, y: 50, color: "#e6e7e8" },
+    { x: 180, y: 40, color: "#d1d3d4" },
+    { x: 180, y: 30, color: "#58595b" },
+    { x: 170, y: 190, color: "#58595b" },
+    { x: 170, y: 180, color: "#939598" },
+    { x: 170, y: 60, color: "#58595b" },
+    { x: 170, y: 50, color: "#d1d3d4" },
+    { x: 170, y: 40, color: "#e6e7e8" },
+    { x: 170, y: 30, color: "#58595b" },
+    { x: 160, y: 190, color: "#e6e7e8" },
+    { x: 160, y: 180, color: "#939598" },
+    { x: 150, y: 190, color: "#58595b" },
+    { x: 150, y: 180, color: "#939598" },
+    { x: 150, y: 190, color: "#e6e7e8" },
+    { x: 150, y: 180, color: "#939598" },
+    { x: 140, y: 190, color: "#58595b" },
+    { x: 140, y: 180, color: "#939598" },
+    { x: 130, y: 190, color: "#e6e7e8" },
+    { x: 130, y: 180, color: "#939598" },
+    { x: 120, y: 190, color: "#58595b" },
+    { x: 120, y: 180, color: "#939598" },
+    { x: 120, y: 60, color: "#58595b" },
+    { x: 120, y: 50, color: "#d1d3d4" },
+    { x: 120, y: 40, color: "#e6e7e8" },
+    { x: 120, y: 30, color: "#58595b" },
+    { x: 110, y: 250, color: "#939598" },
+    { x: 110, y: 240, color: "#939598" },
+    { x: 110, y: 230, color: "#939598" },
+    { x: 110, y: 220, color: "#939598" },
+    { x: 110, y: 210, color: "#939598" },
+    { x: 110, y: 200, color: "#939598" },
+    { x: 110, y: 190, color: "#939598" },
+    { x: 110, y: 180, color: "#939598" },
+    { x: 110, y: 60, color: "#58595b" },
+    { x: 110, y: 50, color: "#e6e7e8" },
+    { x: 110, y: 40, color: "#d1d3d4" },
+    { x: 110, y: 30, color: "#58595b" },
+    { x: 100, y: 250, color: "#939598" },
+    { x: 100, y: 240, color: "#e6e7e8" },
+    { x: 100, y: 60, color: "#58595b" },
+    { x: 100, y: 50, color: "#d1d3d4" },
+    { x: 100, y: 40, color: "#e6e7e8" },
+    { x: 100, y: 30, color: "#58595b" },
+    { x: 90, y: 250, color: "#939598" },
+    { x: 90, y: 240, color: "#58595b" },
+    { x: 90, y: 60, color: "#58595b" },
+    { x: 90, y: 50, color: "#e6e7e8" },
+    { x: 90, y: 40, color: "#d1d3d4" },
+    { x: 90, y: 30, color: "#58595b" },
+    { x: 80, y: 250, color: "#939598" },
+    { x: 80, y: 240, color: "#e6e7e8" },
+    { x: 80, y: 60, color: "#58595b" },
+    { x: 80, y: 50, color: "#d1d3d4" },
+    { x: 80, y: 40, color: "#e6e7e8" },
+    { x: 80, y: 30, color: "#58595b" },
+    { x: 70, y: 250, color: "#939598" },
+    { x: 70, y: 240, color: "#58595b" },
+    { x: 70, y: 60, color: "#58595b" },
+    { x: 70, y: 50, color: "#231f20" },
+    { x: 70, y: 40, color: "#231f20" },
+    { x: 70, y: 30, color: "#58595b" },
+    { x: 60, y: 250, color: "#939598" },
+    { x: 60, y: 240, color: "#e6e7e8" },
+    { x: 60, y: 60, color: "#58595b" },
+    { x: 60, y: 50, color: "#58595b" },
+    { x: 60, y: 40, color: "#58595b" },
+    { x: 60, y: 30, color: "#58595b" },
+    { x: 50, y: 250, color: "#939598" },
+    { x: 50, y: 240, color: "#58595b" },
+    { x: 50, y: 60, color: "#58595b" },
+    { x: 50, y: 50, color: "#231f20" },
+    { x: 50, y: 40, color: "#a7a9ac" },
+    { x: 50, y: 30, color: "#58595b" },
+    { x: 40, y: 250, color: "#939598" },
+    { x: 40, y: 240, color: "#939598" },
+    { x: 40, y: 230, color: "#939598" },
+    { x: 40, y: 220, color: "#939598" },
+    { x: 40, y: 210, color: "#939598" },
+    { x: 40, y: 200, color: "#939598" },
+    { x: 40, y: 190, color: "#939598" },
+    { x: 40, y: 180, color: "#939598" },
+    { x: 40, y: 60, color: "#58595b" },
+    { x: 40, y: 50, color: "#a7a9ac" },
+    { x: 40, y: 40, color: "#231f20" },
+    { x: 40, y: 30, color: "#58595b" },
+    { x: 30, y: 60, color: "#58595b" },
+    { x: 30, y: 50, color: "#58595b" },
+    { x: 30, y: 40, color: "#58595b" },
+    { x: 30, y: 30, color: "#58595b" }
+  ]
+},
+
+{
+  obstacles: [
+    { x: 250, y: 250, color: "#939598" },
+    { x: 250, y: 240, color: "#6d6e71" },
+    { x: 250, y: 210, color: "#939598" },
+    { x: 250, y: 200, color: "#6d6e71" },
+    { x: 250, y: 90, color: "#a7a9ac" },
+    { x: 250, y: 80, color: "#6d6e71" },
+    { x: 250, y: 50, color: "#a7a9ac" },
+    { x: 250, y: 40, color: "#6d6e71" },
+    { x: 240, y: 250, color: "#6d6e71" },
+    { x: 240, y: 240, color: "#a7a9ac" },
+    { x: 240, y: 210, color: "#6d6e71" },
+    { x: 240, y: 200, color: "#a7a9ac" },
+    { x: 240, y: 90, color: "#6d6e71" },
+    { x: 240, y: 80, color: "#939598" },
+    { x: 240, y: 50, color: "#6d6e71" },
+    { x: 240, y: 40, color: "#939598" },
+    { x: 230, y: 250, color: "#939598" },
+    { x: 230, y: 240, color: "#6d6e71" },
+    { x: 230, y: 210, color: "#939598" },
+    { x: 230, y: 200, color: "#6d6e71" },
+    { x: 230, y: 90, color: "#a7a9ac" },
+    { x: 230, y: 80, color: "#6d6e71" },
+    { x: 230, y: 50, color: "#a7a9ac" },
+    { x: 230, y: 40, color: "#6d6e71" },
+    { x: 220, y: 250, color: "#6d6e71" },
+    { x: 220, y: 240, color: "#a7a9ac" },
+    { x: 220, y: 210, color: "#6d6e71" },
+    { x: 220, y: 200, color: "#a7a9ac" },
+    { x: 220, y: 90, color: "#6d6e71" },
+    { x: 220, y: 80, color: "#939598" },
+    { x: 220, y: 50, color: "#6d6e71" },
+    { x: 220, y: 40, color: "#939598" },
+    { x: 210, y: 210, color: "#939598" },
+    { x: 210, y: 200, color: "#6d6e71" },
+    { x: 210, y: 90, color: "#a7a9ac" },
+    { x: 210, y: 80, color: "#6d6e71" },
+    { x: 210, y: 50, color: "#a7a9ac" },
+    { x: 210, y: 40, color: "#6d6e71" },
+    { x: 200, y: 210, color: "#6d6e71" },
+    { x: 200, y: 200, color: "#a7a9ac" },
+    { x: 200, y: 90, color: "#6d6e71" },
+    { x: 200, y: 80, color: "#939598" },
+    { x: 190, y: 90, color: "#a7a9ac" },
+    { x: 190, y: 80, color: "#6d6e71" },
+    { x: 180, y: 250, color: "#6d6e71" },
+    { x: 180, y: 240, color: "#a7a9ac" },
+    { x: 180, y: 90, color: "#6d6e71" },
+    { x: 180, y: 80, color: "#939598" },
+    { x: 180, y: 50, color: "#a7a9ac" },
+    { x: 180, y: 40, color: "#6d6e71" },
+    { x: 170, y: 250, color: "#939598" },
+    { x: 170, y: 240, color: "#6d6e71" },
+    { x: 170, y: 210, color: "#6d6e71" },
+    { x: 170, y: 200, color: "#a7a9ac" },
+    { x: 170, y: 90, color: "#a7a9ac" },
+    { x: 170, y: 80, color: "#6d6e71" },
+    { x: 170, y: 50, color: "#6d6e71" },
+    { x: 170, y: 40, color: "#939598" },
+    { x: 160, y: 250, color: "#6d6e71" },
+    { x: 160, y: 240, color: "#a7a9ac" },
+    { x: 160, y: 210, color: "#939598" },
+    { x: 160, y: 200, color: "#6d6e71" },
+    { x: 160, y: 90, color: "#6d6e71" },
+    { x: 160, y: 80, color: "#939598" },
+    { x: 160, y: 50, color: "#a7a9ac" },
+    { x: 160, y: 40, color: "#6d6e71" },
+    { x: 150, y: 250, color: "#939598" },
+    { x: 150, y: 240, color: "#6d6e71" },
+    { x: 150, y: 210, color: "#6d6e71" },
+    { x: 150, y: 200, color: "#a7a9ac" },
+    { x: 150, y: 50, color: "#6d6e71" },
+    { x: 150, y: 40, color: "#939598" },
+    { x: 150, y: 250, color: "#6d6e71" },
+    { x: 150, y: 240, color: "#a7a9ac" },
+    { x: 150, y: 210, color: "#939598" },
+    { x: 150, y: 200, color: "#6d6e71" },
+    { x: 150, y: 50, color: "#a7a9ac" },
+    { x: 150, y: 40, color: "#6d6e71" },
+    { x: 140, y: 250, color: "#939598" },
+    { x: 140, y: 240, color: "#6d6e71" },
+    { x: 140, y: 210, color: "#6d6e71" },
+    { x: 140, y: 200, color: "#a7a9ac" },
+    { x: 140, y: 50, color: "#6d6e71" },
+    { x: 140, y: 40, color: "#939598" },
+    { x: 130, y: 250, color: "#6d6e71" },
+    { x: 130, y: 240, color: "#a7a9ac" },
+    { x: 130, y: 210, color: "#939598" },
+    { x: 130, y: 200, color: "#6d6e71" },
+    { x: 130, y: 90, color: "#a7a9ac" },
+    { x: 130, y: 80, color: "#6d6e71" },
+    { x: 130, y: 50, color: "#a7a9ac" },
+    { x: 130, y: 40, color: "#6d6e71" },
+    { x: 120, y: 210, color: "#6d6e71" },
+    { x: 120, y: 200, color: "#a7a9ac" },
+    { x: 120, y: 90, color: "#6d6e71" },
+    { x: 120, y: 80, color: "#939598" },
+    { x: 120, y: 50, color: "#6d6e71" },
+    { x: 120, y: 40, color: "#939598" },
+    { x: 110, y: 210, color: "#939598" },
+    { x: 110, y: 200, color: "#6d6e71" },
+    { x: 110, y: 90, color: "#a7a9ac" },
+    { x: 110, y: 80, color: "#6d6e71" },
+    { x: 100, y: 210, color: "#6d6e71" },
+    { x: 100, y: 200, color: "#a7a9ac" },
+    { x: 100, y: 90, color: "#6d6e71" },
+    { x: 100, y: 80, color: "#939598" },
+    { x: 90, y: 250, color: "#6d6e71" },
+    { x: 90, y: 240, color: "#a7a9ac" },
+    { x: 90, y: 90, color: "#a7a9ac" },
+    { x: 90, y: 80, color: "#6d6e71" },
+    { x: 90, y: 50, color: "#6d6e71" },
+    { x: 90, y: 40, color: "#939598" },
+    { x: 80, y: 250, color: "#939598" },
+    { x: 80, y: 240, color: "#6d6e71" },
+    { x: 80, y: 210, color: "#6d6e71" },
+    { x: 80, y: 200, color: "#a7a9ac" },
+    { x: 80, y: 90, color: "#6d6e71" },
+    { x: 80, y: 80, color: "#939598" },
+    { x: 80, y: 50, color: "#a7a9ac" },
+    { x: 80, y: 40, color: "#6d6e71" },
+    { x: 70, y: 250, color: "#6d6e71" },
+    { x: 70, y: 240, color: "#a7a9ac" },
+    { x: 70, y: 210, color: "#939598" },
+    { x: 70, y: 200, color: "#6d6e71" },
+    { x: 70, y: 90, color: "#a7a9ac" },
+    { x: 70, y: 80, color: "#6d6e71" },
+    { x: 70, y: 50, color: "#6d6e71" },
+    { x: 70, y: 40, color: "#939598" },
+    { x: 60, y: 250, color: "#939598" },
+    { x: 60, y: 240, color: "#6d6e71" },
+    { x: 60, y: 210, color: "#6d6e71" },
+    { x: 60, y: 200, color: "#a7a9ac" },
+    { x: 60, y: 50, color: "#a7a9ac" },
+    { x: 60, y: 40, color: "#6d6e71" },
+    { x: 50, y: 250, color: "#6d6e71" },
+    { x: 50, y: 240, color: "#a7a9ac" },
+    { x: 50, y: 210, color: "#939598" },
+    { x: 50, y: 200, color: "#6d6e71" },
+    { x: 50, y: 50, color: "#6d6e71" },
+    { x: 50, y: 40, color: "#939598" },
+    { x: 40, y: 250, color: "#939598" },
+    { x: 40, y: 240, color: "#6d6e71" },
+    { x: 40, y: 210, color: "#6d6e71" },
+    { x: 40, y: 200, color: "#a7a9ac" },
+    { x: 40, y: 90, color: "#6d6e71" },
+    { x: 40, y: 80, color: "#939598" },
+    { x: 40, y: 50, color: "#a7a9ac" },
+    { x: 40, y: 40, color: "#6d6e71" }
+  ]
+},
+
+{
+  obstacles: [
+    { x: 200, y: 100, color: "#231f20" },
+    { x: 190, y: 90, color: "#231f20" },
+    { x: 180, y: 80, color: "#231f20" },
+    { x: 170, y: 70, color: "#231f20" },
+    { x: 160, y: 60, color: "#231f20" },
+    { x: 150, y: 50, color: "#231f20" },
+    { x: 130, y: 50, color: "#231f20" },
+    { x: 120, y: 60, color: "#231f20" },
+    { x: 110, y: 70, color: "#231f20" },
+    { x: 100, y: 80, color: "#231f20" },
+    { x: 90, y: 90, color: "#231f20" },
+    { x: 80, y: 100, color: "#231f20" },
+    { x: 80, y: 180, color: "#231f20" },
+    { x: 90, y: 190, color: "#231f20" },
+    { x: 100, y: 200, color: "#231f20" },
+    { x: 110, y: 210, color: "#231f20" },
+    { x: 120, y: 220, color: "#231f20" },
+    { x: 130, y: 230, color: "#231f20" },
+    { x: 200, y: 180, color: "#231f20" },
+    { x: 190, y: 190, color: "#231f20" },
+    { x: 180, y: 200, color: "#231f20" },
+    { x: 170, y: 210, color: "#231f20" },
+    { x: 160, y: 220, color: "#231f20" },
+    { x: 150, y: 230, color: "#231f20" },
+    { x: 150, y: 240, color: "#231f20" },
+    { x: 140, y: 240, color: "#231f20" },
+    { x: 150, y: 40, color: "#231f20" },
+    { x: 140, y: 40, color: "#231f20" },
+    { x: 210, y: 100, color: "#808285" },
+    { x: 200, y: 90, color: "#808285" },
+    { x: 190, y: 80, color: "#808285" },
+    { x: 180, y: 70, color: "#808285" },
+    { x: 170, y: 60, color: "#808285" },
+    { x: 160, y: 50, color: "#808285" },
+    { x: 150, y: 40, color: "#808285" },
+    { x: 150, y: 30, color: "#808285" },
+    { x: 140, y: 30, color: "#808285" },
+    { x: 130, y: 40, color: "#808285" },
+    { x: 120, y: 50, color: "#808285" },
+    { x: 110, y: 60, color: "#808285" },
+    { x: 100, y: 70, color: "#808285" },
+    { x: 90, y: 80, color: "#808285" },
+    { x: 80, y: 90, color: "#808285" },
+    { x: 70, y: 100, color: "#808285" },
+    { x: 210, y: 180, color: "#808285" },
+    { x: 200, y: 190, color: "#808285" },
+    { x: 190, y: 200, color: "#808285" },
+    { x: 180, y: 210, color: "#808285" },
+    { x: 170, y: 220, color: "#808285" },
+    { x: 160, y: 230, color: "#808285" },
+    { x: 150, y: 240, color: "#808285" },
+    { x: 150, y: 250, color: "#808285" },
+    { x: 140, y: 250, color: "#808285" },
+    { x: 130, y: 240, color: "#808285" },
+    { x: 120, y: 230, color: "#808285" },
+    { x: 110, y: 220, color: "#808285" },
+    { x: 100, y: 210, color: "#808285" },
+    { x: 90, y: 200, color: "#808285" },
+    { x: 80, y: 190, color: "#808285" },
+    { x: 70, y: 180, color: "#808285" }
+  ]
+},
+
+{
+  obstacles: [
+    { x: 110, y: 250, color: "#6d6e71" },
+    { x: 110, y: 40, color: "#6d6e71" },
+    { x: 180, y: 40, color: "#6d6e71" },
+    { x: 180, y: 250, color: "#6d6e71" },
+    { x: 120, y: 40, color: "#808285" },
+    { x: 120, y: 250, color: "#808285" },
+    { x: 170, y: 40, color: "#808285" },
+    { x: 160, y: 40, color: "#808285" },
+    { x: 170, y: 250, color: "#808285" },
+    { x: 160, y: 250, color: "#808285" },
+    { x: 130, y: 40, color: "#808285" },
+    { x: 150, y: 40, color: "#808285" },
+    { x: 150, y: 40, color: "#808285" },
+    { x: 140, y: 40, color: "#808285" },
+    { x: 130, y: 250, color: "#808285" },
+    { x: 150, y: 250, color: "#808285" },
+    { x: 140, y: 250, color: "#808285" },
+    { x: 150, y: 250, color: "#808285" },
+    { x: 20, y: 150, color: "#808285" },
+    { x: 20, y: 140, color: "#808285" },
+    { x: 20, y: 130, color: "#808285" },
+    { x: 20, y: 170, color: "#6d6e71" },
+    { x: 20, y: 160, color: "#808285" },
+    { x: 20, y: 120, color: "#808285" },
+    { x: 20, y: 110, color: "#6d6e71" },
+    { x: 20, y: 150, color: "#808285" },
+    { x: 270, y: 170, color: "#6d6e71" },
+    { x: 270, y: 160, color: "#808285" },
+    { x: 270, y: 150, color: "#808285" },
+    { x: 270, y: 150, color: "#808285" },
+    { x: 270, y: 140, color: "#808285" },
+    { x: 270, y: 130, color: "#808285" },
+    { x: 270, y: 120, color: "#808285" },
+    { x: 270, y: 110, color: "#6d6e71" }
+  ]
+},
+
+{
+  obstacles: [
+    { x: 260, y: 230, color: "#808285" },
+    { x: 260, y: 220, color: "#808285" },
+    { x: 260, y: 210, color: "#808285" },
+    { x: 260, y: 200, color: "#808285" },
+    { x: 260, y: 190, color: "#808285" },
+    { x: 260, y: 180, color: "#808285" },
+    { x: 260, y: 40, color: "#808285" },
+    { x: 260, y: 30, color: "#808285" },
+    { x: 260, y: 20, color: "#808285" },
+    { x: 260, y: 10, color: "#808285" },
+    { x: 250, y: 180, color: "#808285" },
+    { x: 250, y: 100, color: "#808285" },
+    { x: 250, y: 10, color: "#808285" },
+    { x: 240, y: 180, color: "#808285" },
+    { x: 240, y: 100, color: "#808285" },
+    { x: 240, y: 10, color: "#808285" },
+    { x: 230, y: 180, color: "#808285" },
+    { x: 230, y: 100, color: "#808285" },
+    { x: 230, y: 10, color: "#808285" },
+    { x: 220, y: 180, color: "#808285" },
+    { x: 220, y: 100, color: "#808285" },
+    { x: 220, y: 10, color: "#808285" },
+    { x: 210, y: 100, color: "#808285" },
+    { x: 210, y: 10, color: "#808285" },
+    { x: 200, y: 100, color: "#808285" },
+    { x: 200, y: 90, color: "#808285" },
+    { x: 200, y: 80, color: "#808285" },
+    { x: 200, y: 70, color: "#808285" },
+    { x: 200, y: 60, color: "#808285" },
+    { x: 200, y: 50, color: "#808285" },
+    { x: 200, y: 40, color: "#808285" },
+    { x: 200, y: 10, color: "#808285" },
+    { x: 190, y: 10, color: "#808285" },
+    { x: 180, y: 10, color: "#808285" },
+    { x: 160, y: 180, color: "#808285" },
+    { x: 160, y: 70, color: "#808285" },
+    { x: 150, y: 180, color: "#808285" },
+    { x: 150, y: 70, color: "#808285" },
+    { x: 150, y: 180, color: "#808285" },
+    { x: 150, y: 70, color: "#808285" },
+    { x: 140, y: 180, color: "#808285" },
+    { x: 140, y: 70, color: "#808285" },
+    { x: 130, y: 180, color: "#808285" },
+    { x: 130, y: 70, color: "#808285" },
+    { x: 120, y: 180, color: "#808285" },
+    { x: 120, y: 70, color: "#808285" },
+    { x: 110, y: 180, color: "#808285" },
+    { x: 110, y: 70, color: "#808285" },
+    { x: 70, y: 260, color: "#808285" },
+    { x: 70, y: 250, color: "#808285" },
+    { x: 70, y: 240, color: "#808285" },
+    { x: 70, y: 230, color: "#808285" },
+    { x: 70, y: 220, color: "#808285" },
+    { x: 70, y: 210, color: "#808285" },
+    { x: 70, y: 200, color: "#808285" },
+    { x: 70, y: 190, color: "#808285" },
+    { x: 70, y: 180, color: "#808285" },
+    { x: 70, y: 100, color: "#808285" },
+    { x: 70, y: 90, color: "#808285" },
+    { x: 70, y: 80, color: "#808285" },
+    { x: 70, y: 70, color: "#808285" },
+    { x: 70, y: 60, color: "#808285" },
+    { x: 70, y: 50, color: "#808285" },
+    { x: 70, y: 40, color: "#808285" },
+    { x: 60, y: 260, color: "#808285" },
+    { x: 60, y: 180, color: "#808285" },
+    { x: 60, y: 100, color: "#808285" },
+    { x: 50, y: 260, color: "#808285" },
+    { x: 50, y: 180, color: "#808285" },
+    { x: 50, y: 100, color: "#808285" },
+    { x: 40, y: 260, color: "#808285" },
+    { x: 40, y: 180, color: "#808285" },
+    { x: 40, y: 100, color: "#808285" },
+    { x: 30, y: 260, color: "#808285" },
+    { x: 30, y: 180, color: "#808285" }
+  ]
+},
+
+{
+  obstacles: [
+    { x: 170, y: 90, color: "#d1d3d4" },
+    { x: 160, y: 120, color: "#d1d3d4" },
+    { x: 150, y: 120, color: "#d1d3d4" },
+    { x: 100, y: 120, color: "#d1d3d4" },
+    { x: 60, y: 120, color: "#d1d3d4" },
+    { x: 60, y: 110, color: "#d1d3d4" },
+    { x: 90, y: 80, color: "#d1d3d4" },
+    { x: 90, y: 90, color: "#d1d3d4" },
+    { x: 90, y: 70, color: "#d1d3d4" },
+    { x: 70, y: 70, color: "#d1d3d4" },
+    { x: 70, y: 90, color: "#d1d3d4" },
+    { x: 70, y: 80, color: "#d1d3d4" },
+    { x: 90, y: 100, color: "#d1d3d4" },
+    { x: 70, y: 100, color: "#d1d3d4" },
+    { x: 100, y: 90, color: "#d1d3d4" },
+    { x: 100, y: 100, color: "#d1d3d4" },
+    { x: 100, y: 60, color: "#d1d3d4" },
+    { x: 100, y: 80, color: "#d1d3d4" },
+    { x: 100, y: 70, color: "#d1d3d4" },
+    { x: 80, y: 110, color: "#d1d3d4" },
+    { x: 80, y: 70, color: "#d1d3d4" },
+    { x: 80, y: 60, color: "#d1d3d4" },
+    { x: 80, y: 120, color: "#d1d3d4" },
+    { x: 80, y: 90, color: "#d1d3d4" },
+    { x: 80, y: 80, color: "#d1d3d4" },
+    { x: 80, y: 100, color: "#d1d3d4" },
+    { x: 120, y: 110, color: "#d1d3d4" },
+    { x: 110, y: 100, color: "#d1d3d4" },
+    { x: 40, y: 80, color: "#d1d3d4" },
+    { x: 30, y: 90, color: "#d1d3d4" },
+    { x: 30, y: 80, color: "#d1d3d4" },
+    { x: 40, y: 110, color: "#d1d3d4" },
+    { x: 40, y: 100, color: "#d1d3d4" },
+    { x: 50, y: 100, color: "#d1d3d4" },
+    { x: 50, y: 90, color: "#d1d3d4" },
+    { x: 50, y: 80, color: "#d1d3d4" },
+    { x: 50, y: 70, color: "#d1d3d4" },
+    { x: 60, y: 90, color: "#d1d3d4" },
+    { x: 60, y: 80, color: "#d1d3d4" },
+    { x: 60, y: 70, color: "#d1d3d4" },
+    { x: 60, y: 60, color: "#d1d3d4" },
+    { x: 90, y: 40, color: "#d1d3d4" },
+    { x: 90, y: 50, color: "#d1d3d4" },
+    { x: 80, y: 40, color: "#d1d3d4" },
+    { x: 70, y: 40, color: "#d1d3d4" },
+    { x: 70, y: 50, color: "#d1d3d4" },
+    { x: 60, y: 50, color: "#6d6e71" },
+    { x: 100, y: 50, color: "#6d6e71" },
+    { x: 110, y: 60, color: "#bcbec0" },
+    { x: 110, y: 80, color: "#bcbec0" },
+    { x: 110, y: 40, color: "#bcbec0" },
+    { x: 110, y: 70, color: "#bcbec0" },
+    { x: 110, y: 50, color: "#bcbec0" },
+    { x: 40, y: 60, color: "#bcbec0" },
+    { x: 60, y: 100, color: "#939598" },
+    { x: 170, y: 110, color: "#939598" },
+    { x: 170, y: 100, color: "#939598" },
+    { x: 160, y: 90, color: "#939598" },
+    { x: 50, y: 50, color: "#939598" },
+    { x: 50, y: 60, color: "#939598" },
+    { x: 50, y: 40, color: "#939598" },
+    { x: 100, y: 20, color: "#939598" },
+    { x: 70, y: 30, color: "#939598" },
+    { x: 60, y: 30, color: "#939598" },
+    { x: 100, y: 30, color: "#939598" },
+    { x: 90, y: 30, color: "#939598" },
+    { x: 80, y: 30, color: "#939598" },
+    { x: 60, y: 20, color: "#939598" },
+    { x: 90, y: 110, color: "#939598" },
+    { x: 110, y: 90, color: "#939598" },
+    { x: 120, y: 100, color: "#939598" },
+    { x: 120, y: 60, color: "#939598" },
+    { x: 120, y: 80, color: "#939598" },
+    { x: 130, y: 90, color: "#939598" },
+    { x: 130, y: 110, color: "#939598" },
+    { x: 150, y: 120, color: "#6d6e71" },
+    { x: 100, y: 110, color: "#6d6e71" },
+    { x: 70, y: 110, color: "#6d6e71" },
+    { x: 40, y: 70, color: "#6d6e71" },
+    { x: 40, y: 90, color: "#6d6e71" },
+    { x: 30, y: 100, color: "#6d6e71" },
+    { x: 120, y: 70, color: "#6d6e71" },
+    { x: 130, y: 80, color: "#6d6e71" },
+    { x: 120, y: 90, color: "#6d6e71" },
+    { x: 130, y: 100, color: "#6d6e71" },
+    { x: 60, y: 40, color: "#231f20" },
+    { x: 100, y: 40, color: "#231f20" },
+    { x: 70, y: 60, color: "#231f20" },
+    { x: 90, y: 60, color: "#231f20" },
+    { x: 80, y: 50, color: "#231f20" },
+    { x: 140, y: 120, color: "#231f20" },
+    { x: 150, y: 130, color: "#231f20" },
+    { x: 150, y: 130, color: "#231f20" },
+    { x: 160, y: 130, color: "#231f20" },
+    { x: 170, y: 120, color: "#231f20" },
+    { x: 180, y: 100, color: "#231f20" },
+    { x: 180, y: 110, color: "#231f20" },
+    { x: 180, y: 90, color: "#231f20" },
+    { x: 170, y: 80, color: "#231f20" },
+    { x: 160, y: 80, color: "#231f20" },
+    { x: 150, y: 90, color: "#231f20" },
+    { x: 160, y: 110, color: "#231f20" },
+    { x: 160, y: 100, color: "#231f20" },
+    { x: 150, y: 110, color: "#231f20" },
+    { x: 150, y: 110, color: "#231f20" },
+    { x: 140, y: 110, color: "#231f20" },
+    { x: 140, y: 100, color: "#231f20" },
+    { x: 140, y: 90, color: "#231f20" },
+    { x: 140, y: 80, color: "#231f20" },
+    { x: 130, y: 120, color: "#231f20" },
+    { x: 130, y: 70, color: "#231f20" },
+    { x: 130, y: 60, color: "#231f20" },
+    { x: 130, y: 50, color: "#231f20" },
+    { x: 120, y: 120, color: "#231f20" },
+    { x: 120, y: 50, color: "#231f20" },
+    { x: 120, y: 40, color: "#231f20" },
+    { x: 120, y: 30, color: "#231f20" },
+    { x: 110, y: 130, color: "#231f20" },
+    { x: 110, y: 120, color: "#231f20" },
+    { x: 110, y: 110, color: "#231f20" },
+    { x: 110, y: 30, color: "#231f20" },
+    { x: 110, y: 20, color: "#231f20" },
+    { x: 100, y: 130, color: "#231f20" },
+    { x: 100, y: 10, color: "#231f20" },
+    { x: 90, y: 130, color: "#231f20" },
+    { x: 90, y: 120, color: "#231f20" },
+    { x: 90, y: 20, color: "#231f20" },
+    { x: 80, y: 20, color: "#231f20" },
+    { x: 70, y: 130, color: "#231f20" },
+    { x: 70, y: 120, color: "#231f20" },
+    { x: 70, y: 20, color: "#231f20" },
+    { x: 60, y: 130, color: "#231f20" },
+    { x: 60, y: 10, color: "#231f20" },
+    { x: 50, y: 130, color: "#231f20" },
+    { x: 50, y: 120, color: "#231f20" },
+    { x: 50, y: 110, color: "#231f20" },
+    { x: 50, y: 30, color: "#231f20" },
+    { x: 50, y: 20, color: "#231f20" },
+    { x: 40, y: 120, color: "#231f20" },
+    { x: 40, y: 50, color: "#231f20" },
+    { x: 40, y: 40, color: "#231f20" },
+    { x: 40, y: 30, color: "#231f20" },
+    { x: 30, y: 110, color: "#231f20" },
+    { x: 30, y: 70, color: "#231f20" },
+    { x: 30, y: 60, color: "#231f20" },
+    { x: 30, y: 50, color: "#231f20" },
+    { x: 20, y: 100, color: "#231f20" },
+    { x: 20, y: 90, color: "#231f20" },
+    { x: 20, y: 80, color: "#231f20" }
+  ]
+},
+
+{
+  obstacles: [
+    { x: 270, y: 280, color: "#603913" },
+    { x: 270, y: 270, color: "#603913" },
+    { x: 270, y: 260, color: "#603913" },
+    { x: 270, y: 250, color: "#603913" },
+    { x: 270, y: 240, color: "#603913" },
+    { x: 270, y: 230, color: "#603913" },
+    { x: 270, y: 220, color: "#603913" },
+    { x: 260, y: 280, color: "#603913" },
+    { x: 260, y: 270, color: "#c49a6c" },
+    { x: 260, y: 260, color: "#c49a6c" },
+    { x: 260, y: 250, color: "#c49a6c" },
+    { x: 260, y: 240, color: "#c49a6c" },
+    { x: 260, y: 230, color: "#c49a6c" },
+    { x: 260, y: 220, color: "#603913" },
+    { x: 250, y: 280, color: "#603913" },
+    { x: 250, y: 270, color: "#c49a6c" },
+    { x: 250, y: 260, color: "#c49a6c" },
+    { x: 250, y: 250, color: "#c49a6c" },
+    { x: 250, y: 240, color: "#c49a6c" },
+    { x: 250, y: 230, color: "#603913" },
+    { x: 250, y: 220, color: "#603913" },
+    { x: 250, y: 210, color: "#603913" },
+    { x: 240, y: 280, color: "#603913" },
+    { x: 240, y: 270, color: "#c49a6c" },
+    { x: 240, y: 260, color: "#c49a6c" },
+    { x: 240, y: 250, color: "#603913" },
+    { x: 240, y: 240, color: "#c49a6c" },
+    { x: 240, y: 230, color: "#603913" },
+    { x: 240, y: 220, color: "#603913" },
+    { x: 240, y: 210, color: "#603913" },
+    { x: 240, y: 200, color: "#603913" },
+    { x: 230, y: 280, color: "#603913" },
+    { x: 230, y: 270, color: "#c49a6c" },
+    { x: 230, y: 260, color: "#c49a6c" },
+    { x: 230, y: 250, color: "#c49a6c" },
+    { x: 230, y: 240, color: "#fff" },
+    { x: 230, y: 230, color: "#c49a6c" },
+    { x: 230, y: 220, color: "#603913" },
+    { x: 230, y: 210, color: "#603913" },
+    { x: 230, y: 200, color: "#603913" },
+    { x: 230, y: 190, color: "#603913" },
+    { x: 220, y: 280, color: "#603913" },
+    { x: 220, y: 270, color: "#c49a6c" },
+    { x: 220, y: 260, color: "#603913" },
+    { x: 220, y: 250, color: "#c49a6c" },
+    { x: 220, y: 240, color: "#c49a6c" },
+    { x: 220, y: 230, color: "#603913" },
+    { x: 220, y: 220, color: "#603913" },
+    { x: 220, y: 210, color: "#603913" },
+    { x: 220, y: 200, color: "#ed1c24" },
+    { x: 220, y: 190, color: "#ed1c24" },
+    { x: 220, y: 180, color: "#603913" },
+    { x: 210, y: 280, color: "#603913" },
+    { x: 210, y: 270, color: "#c49a6c" },
+    { x: 210, y: 260, color: "#c49a6c" },
+    { x: 210, y: 250, color: "#c49a6c" },
+    { x: 210, y: 240, color: "#c49a6c" },
+    { x: 210, y: 230, color: "#603913" },
+    { x: 210, y: 220, color: "#603913" },
+    { x: 210, y: 210, color: "#ed1c24" },
+    { x: 210, y: 200, color: "#ed1c24" },
+    { x: 210, y: 190, color: "#ed1c24" },
+    { x: 210, y: 180, color: "#ed1c24" },
+    { x: 210, y: 170, color: "#603913" },
+    { x: 200, y: 280, color: "#603913" },
+    { x: 200, y: 270, color: "#c49a6c" },
+    { x: 200, y: 260, color: "#c49a6c" },
+    { x: 200, y: 250, color: "#603913" },
+    { x: 200, y: 240, color: "#c49a6c" },
+    { x: 200, y: 230, color: "#c49a6c" },
+    { x: 200, y: 220, color: "#603913" },
+    { x: 200, y: 210, color: "#ed1c24" },
+    { x: 200, y: 200, color: "#ed1c24" },
+    { x: 200, y: 190, color: "#ed1c24" },
+    { x: 200, y: 180, color: "#ed1c24" },
+    { x: 200, y: 170, color: "#fff" },
+    { x: 200, y: 160, color: "#603913" },
+    { x: 190, y: 280, color: "#603913" },
+    { x: 190, y: 270, color: "#c49a6c" },
+    { x: 190, y: 260, color: "#c49a6c" },
+    { x: 190, y: 250, color: "#c49a6c" },
+    { x: 190, y: 240, color: "#fff" },
+    { x: 190, y: 230, color: "#603913" },
+    { x: 190, y: 220, color: "#603913" },
+    { x: 190, y: 210, color: "#fff" },
+    { x: 190, y: 200, color: "#ed1c24" },
+    { x: 190, y: 190, color: "#ed1c24" },
+    { x: 190, y: 180, color: "#fff" },
+    { x: 190, y: 170, color: "#fff" },
+    { x: 190, y: 160, color: "#603913" },
+    { x: 180, y: 280, color: "#603913" },
+    { x: 180, y: 270, color: "#c49a6c" },
+    { x: 180, y: 260, color: "#c49a6c" },
+    { x: 180, y: 250, color: "#c49a6c" },
+    { x: 180, y: 240, color: "#c49a6c" },
+    { x: 180, y: 230, color: "#603913" },
+    { x: 180, y: 220, color: "#603913" },
+    { x: 180, y: 210, color: "#603913" },
+    { x: 180, y: 200, color: "#fff" },
+    { x: 180, y: 190, color: "#fff" },
+    { x: 180, y: 180, color: "#603913" },
+    { x: 180, y: 170, color: "#603913" },
+    { x: 170, y: 280, color: "#603913" },
+    { x: 170, y: 270, color: "#603913" },
+    { x: 170, y: 260, color: "#603913" },
+    { x: 170, y: 250, color: "#c49a6c" },
+    { x: 170, y: 240, color: "#c49a6c" },
+    { x: 170, y: 230, color: "#c49a6c" },
+    { x: 170, y: 220, color: "#603913" },
+    { x: 170, y: 210, color: "#603913" },
+    { x: 170, y: 200, color: "#603913" },
+    { x: 170, y: 190, color: "#603913" },
+    { x: 170, y: 180, color: "#c49a6c" },
+    { x: 170, y: 170, color: "#603913" },
+    { x: 160, y: 250, color: "#603913" },
+    { x: 160, y: 240, color: "#c49a6c" },
+    { x: 160, y: 230, color: "#c49a6c" },
+    { x: 160, y: 220, color: "#c49a6c" },
+    { x: 160, y: 210, color: "#c49a6c" },
+    { x: 160, y: 200, color: "#c49a6c" },
+    { x: 160, y: 190, color: "#c49a6c" },
+    { x: 160, y: 180, color: "#603913" },
+    { x: 150, y: 240, color: "#603913" },
+    { x: 150, y: 230, color: "#603913" },
+    { x: 150, y: 220, color: "#603913" },
+    { x: 150, y: 210, color: "#c49a6c" },
+    { x: 150, y: 200, color: "#603913" },
+    { x: 150, y: 190, color: "#603913" },
+    { x: 150, y: 220, color: "#603913" },
+    { x: 150, y: 210, color: "#603913" }
+  ]
+}
+
+
+
+
+];
+
+
+}
+  
+  
+  
+  )();]]></script>
+        <servicenow>false</servicenow>
+        <sys_class_name>sp_widget</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2025-08-13 18:21:54</sys_created_on>
+        <sys_id>34a2b9929357265032a7f40bdd03d65d</sys_id>
+        <sys_mod_count>576</sys_mod_count>
+        <sys_name>snake</sys_name>
+        <sys_package display_value="Snake" source="e0b175129357265032a7f40bdd03d6ae">e0b175129357265032a7f40bdd03d6ae</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Snake">e0b175129357265032a7f40bdd03d6ae</sys_scope>
+        <sys_update_name>sp_widget_34a2b9929357265032a7f40bdd03d65d</sys_update_name>
+        <sys_updated_by>felix.acosta-carranza@capgemini.com</sys_updated_by>
+        <sys_updated_on>2025-09-23 16:38:24</sys_updated_on>
+        <template><![CDATA[<script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+
+<div id="game-wrapper">
+  <div id="game-area">
+    <div id="snake-layer"></div>
+    <div id="animation-layer"></div>
+    <div id="message-overlay"></div>
+  </div>
+
+  <div id="level-message"> </div>
+  
+
+]]></template>
+    </sp_widget>
+    <sys_es_latest_script action="INSERT_OR_UPDATE">
+        <id>34a2b9929357265032a7f40bdd03d65d</id>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2025-08-13 18:21:53</sys_created_on>
+        <sys_id>9ac2b9929357265032a7f40bdd03d6a7</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2025-08-13 18:21:53</sys_updated_on>
+        <table>sp_widget</table>
+        <use_es_latest>true</use_es_latest>
+    </sys_es_latest_script>
+</record_update>
